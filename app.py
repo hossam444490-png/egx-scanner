@@ -33,9 +33,6 @@ try:
 except ImportError:
     # dotenv not installed — continue without loading .env
     pass
-except ImportError:
-    pass
-
 # Configure Logging
 logging.basicConfig(
     level=logging.INFO,
