@@ -1421,7 +1421,7 @@ def main_dashboard() -> None:
     st.sidebar.caption(session_info["description"])
     st.sidebar.caption(f"🕒 {session_info['cairo_time']}")
     st.sidebar.warning(
-        "Feed Mode: **SIMULATED** (Calibrated EGX GBM + Jump Diffusion). "
+        st.sidebar.success("Feed Mode: **REAL EOD (Yahoo Finance)** (EGX Completed Candles)")
         "Connect a licensed DirectFN/LSEG key in `.env` for live exchange streaming."
     )
 
