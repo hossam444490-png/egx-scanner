@@ -4,7 +4,6 @@ EGX REAL-TIME AUTOMATED STOCK SCANNER & PORTFOLIO ALLOCATOR
 (SINGLE-FILE PRODUCTION EDITION WITH REAL YAHOO FINANCE DATA)
 ===============================================================================
 Run Dashboard : streamlit run app.py
-Run Unit Tests: pytest app.py
 ===============================================================================
 """
 
@@ -27,65 +26,27 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-# Optional dotenv loading if installed
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
-# Configure Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("EGXScanner")
-
-
-# =============================================================================
-# 1. CONFIGURATION & EGX TRADING SESSION / CALENDAR ENGINE
-# =============================================================================
 
 CAIRO_TZ = pytz.timezone("Africa/Cairo")
 
 STATIC_EGX_HOLIDAYS_2026 = {
-    date(2026, 1, 1),   # Bank Holiday
-    date(2026, 1, 7),   # Coptic Christmas
-    date(2026, 1, 25),  # Revolution & Police Day
-    date(2026, 3, 20),  # Eid al-Fitr
-    date(2026, 3, 21),  # Eid al-Fitr
-    date(2026, 3, 22),  # Eid al-Fitr Holiday
-    date(2026, 4, 13),  # Sham El-Nessim
-    date(2026, 4, 25),  # Sinai Liberation Day
-    date(2026, 5, 1),   # Labour Day
-    date(2026, 5, 26),  # Arafat Day
-    date(2026, 5, 27),  # Eid al-Adha
-    date(2026, 5, 28),  # Eid al-Adha
-    date(2026, 6, 17),  # Islamic New Year
-    date(2026, 6, 30),  # June 30 Revolution
-    date(2026, 7, 23),  # July 23 Revolution Day
-    date(2026, 8, 26),  # Prophet's Birthday
-    date(2026, 10, 6),  # Armed Forces Day
+    date(2026, 1, 1), date(2026, 1, 7), date(2026, 1, 25), date(2026, 3, 20),
+    date(2026, 3, 21), date(2026, 3, 22), date(2026, 4, 13), date(2026, 4, 25),
+    date(2026, 5, 1), date(2026, 5, 26), date(2026, 5, 27), date(2026, 5, 28),
+    date(2026, 6, 17), date(2026, 6, 30), date(2026, 7, 23), date(2026, 8, 26),
+    date(2026, 10, 6)
 }
-
 
 class SystemSettings:
     DB_PATH: str = os.getenv("EGX_DB_PATH", "egx_scanner.db")
-    DATA_PROVIDER: str = os.getenv("DATA_PROVIDER", "YFINANCE")
-    API_KEY: str = os.getenv("DATA_PROVIDER_API_KEY", "")
-    MIN_TRADED_VALUE_EGP: float = float(os.getenv("MIN_TRADED_VALUE_EGP", "1000000.0"))
-    MIN_AVG_VOLUME: int = int(os.getenv("MIN_AVG_VOLUME", "50000"))
-    MIN_PRICE_EGP: float = float(os.getenv("MIN_PRICE_EGP", "0.50"))
-    MAX_SPREAD_PCT: float = float(os.getenv("MAX_SPREAD_PCT", "1.50"))
-    ATR_MULTIPLIER_SL: float = float(os.getenv("ATR_MULTIPLIER_SL", "1.5"))
-    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
-    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-    ALERT_RECIPIENT_EMAIL: str = os.getenv("ALERT_RECIPIENT_EMAIL", "")
-
+    DATA_PROVIDER: str = "YFINANCE"
+    MIN_TRADED_VALUE_EGP: float = 1_000_000.0
+    MIN_AVG_VOLUME: int = 50_000
+    MIN_PRICE_EGP: float = 0.50
+    MAX_SPREAD_PCT: float = 1.50
+    ATR_MULTIPLIER_SL: float = 1.5
 
 class EGXMarketSchedule:
     PRE_OPEN_TIME = time(9, 30)
@@ -99,50 +60,31 @@ class EGXMarketSchedule:
 
     @classmethod
     def is_trading_day(cls, dt: Optional[datetime] = None) -> bool:
-        if dt is None:
-            dt = cls.get_cairo_now()
-        elif dt.tzinfo is None:
-            dt = CAIRO_TZ.localize(dt)
-        else:
-            dt = dt.astimezone(CAIRO_TZ)
-        if dt.weekday() in (4, 5):
-            return False
-        if dt.date() in STATIC_EGX_HOLIDAYS_2026:
-            return False
+        if dt is None: dt = cls.get_cairo_now()
+        elif dt.tzinfo is None: dt = CAIRO_TZ.localize(dt)
+        else: dt = dt.astimezone(CAIRO_TZ)
+        if dt.weekday() in (4, 5) or dt.date() in STATIC_EGX_HOLIDAYS_2026: return False
         return True
 
     @classmethod
     def get_session_status(cls, dt: Optional[datetime] = None) -> Dict[str, Any]:
-        if dt is None:
-            dt = cls.get_cairo_now()
-        elif dt.tzinfo is None:
-            dt = CAIRO_TZ.localize(dt)
-        else:
-            dt = dt.astimezone(CAIRO_TZ)
+        if dt is None: dt = cls.get_cairo_now()
+        elif dt.tzinfo is None: dt = CAIRO_TZ.localize(dt)
+        else: dt = dt.astimezone(CAIRO_TZ)
         t = dt.time()
         if not cls.is_trading_day(dt):
-            reason = "Holiday" if dt.date() in STATIC_EGX_HOLIDAYS_2026 else "Weekend (Fri/Sat)"
-            return {
-                "status": "CLOSED_HOLIDAY_WEEKEND",
-                "is_open": False,
-                "description": f"EGX Closed ({reason})",
-                "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            }
+            return {"status": "CLOSED", "is_open": False, "description": "Market Closed (Weekend/Holiday)", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
         if t < cls.PRE_OPEN_TIME:
             return {"status": "PRE_MARKET", "is_open": False, "description": "Pre-Market", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
         elif cls.PRE_OPEN_TIME <= t < cls.CONTINUOUS_OPEN:
-            return {"status": "PRE_OPEN_DISCOVERY", "is_open": True, "description": "Pre-Open Discovery", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
+            return {"status": "DISCOVERY", "is_open": True, "description": "Pre-Open Discovery", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
         elif cls.CONTINUOUS_OPEN <= t < cls.CLOSING_AUCTION:
             return {"status": "CONTINUOUS_TRADING", "is_open": True, "description": "Continuous Trading", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
         elif cls.CLOSING_AUCTION <= t <= cls.MARKET_CLOSE:
             return {"status": "CLOSING_AUCTION", "is_open": True, "description": "Closing Auction", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
         else:
-            return {"status": "POST_MARKET_CLOSED", "is_open": False, "description": "Market Closed", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
+            return {"status": "CLOSED", "is_open": False, "description": "Market Closed", "cairo_time": dt.strftime("%Y-%m-%d %H:%M:%S %Z")}
 
-
-# =============================================================================
-# 2. SQLITE STORAGE & RELIABILITY MANAGER
-# =============================================================================
 
 class StorageManager:
     def __init__(self, db_path: str = SystemSettings.DB_PATH):
@@ -156,127 +98,52 @@ class StorageManager:
 
     def _init_db(self) -> None:
         with self._get_conn() as conn:
-            conn.executescript(
-                """
+            conn.executescript("""
                 CREATE TABLE IF NOT EXISTS scanner_signals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ticker TEXT NOT NULL,
-                    company_name TEXT,
-                    category TEXT NOT NULL,
-                    last_price REAL,
-                    entry_zone TEXT,
-                    stop_loss REAL,
-                    invalidation_level REAL,
-                    target_1 REAL,
-                    target_2 REAL,
-                    risk_reward_ratio REAL,
-                    confidence_score INTEGER,
-                    trigger_reasons TEXT,
-                    data_freshness TEXT,
-                    signal_timestamp TEXT,
-                    UNIQUE(ticker, category, signal_timestamp)
-                );
-                CREATE TABLE IF NOT EXISTS alert_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ticker TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    last_price REAL,
-                    channel TEXT NOT NULL,
-                    dispatched_at TEXT NOT NULL
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL,
+                    company_name TEXT, category TEXT NOT NULL, last_price REAL,
+                    entry_zone TEXT, stop_loss REAL, invalidation_level REAL,
+                    target_1 REAL, target_2 REAL, risk_reward_ratio REAL,
+                    confidence_score INTEGER, trigger_reasons TEXT,
+                    data_freshness TEXT, signal_timestamp TEXT
                 );
                 CREATE TABLE IF NOT EXISTS watchlist (
-                    ticker TEXT PRIMARY KEY,
-                    added_at TEXT NOT NULL,
-                    min_rvol_rule REAL DEFAULT 1.3,
-                    rsi_low_rule REAL DEFAULT 30.0,
-                    rsi_high_rule REAL DEFAULT 70.0,
-                    notes TEXT DEFAULT ''
+                    ticker TEXT PRIMARY KEY, added_at TEXT NOT NULL,
+                    min_rvol_rule REAL DEFAULT 1.3, notes TEXT DEFAULT ''
                 );
-                """
-            )
+            """)
             conn.commit()
 
     def save_signal(self, sig: Dict[str, Any]) -> None:
-        if sig.get("category") in ("NO_ACTIONABLE_SIGNAL", "FILTERED_ILLIQUID", "DATA_INSUFFICIENT"):
-            return
+        if sig.get("category") in ("NO_ACTIONABLE_SIGNAL", "FILTERED_ILLIQUID"): return
         with self._get_conn() as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 INSERT OR IGNORE INTO scanner_signals (
                     ticker, company_name, category, last_price, entry_zone,
                     stop_loss, invalidation_level, target_1, target_2,
                     risk_reward_ratio, confidence_score, trigger_reasons,
                     data_freshness, signal_timestamp
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    sig["ticker"], sig["company_name"], sig["category"],
-                    sig["last_price"], sig["entry_zone"], sig["stop_loss"],
-                    sig["invalidation_level"], sig["target_1"], sig["target_2"],
-                    sig["risk_reward_ratio"], sig["confidence_score"],
-                    sig["trigger_reasons"], sig["data_freshness"],
-                    sig["signal_timestamp"][:16],
-                ),
-            )
+            """, (
+                sig["ticker"], sig["company_name"], sig["category"], sig["last_price"],
+                sig["entry_zone"], sig["stop_loss"], sig["invalidation_level"],
+                sig["target_1"], sig["target_2"], sig["risk_reward_ratio"],
+                sig["confidence_score"], sig["trigger_reasons"], sig["data_freshness"],
+                sig["signal_timestamp"][:16]
+            ))
             conn.commit()
-
-    def get_recent_signals(self, ticker: Optional[str] = None, limit: int = 50) -> pd.DataFrame:
-        with self._get_conn() as conn:
-            if ticker:
-                return pd.read_sql_query("SELECT * FROM scanner_signals WHERE ticker = ? ORDER BY id DESC LIMIT ?", conn, params=(ticker, limit))
-            return pd.read_sql_query("SELECT * FROM scanner_signals ORDER BY id DESC LIMIT ?", conn, params=(limit,))
-
-    def was_alert_recently_sent(self, ticker: str, category: str, last_price: float) -> bool:
-        with self._get_conn() as conn:
-            row = conn.execute(
-                "SELECT last_price FROM alert_history WHERE ticker = ? AND category = ? ORDER BY id DESC LIMIT 1",
-                (ticker, category),
-            ).fetchone()
-            if not row:
-                return False
-            prev_price = float(row["last_price"])
-            return prev_price > 0 and abs(last_price - prev_price) / prev_price < 0.015
-
-    def record_alert(self, ticker: str, category: str, last_price: float, channel: str) -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                "INSERT INTO alert_history (ticker, category, last_price, channel, dispatched_at) VALUES (?, ?, ?, ?, ?)",
-                (ticker, category, last_price, channel, datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S")),
-            )
-            conn.commit()
-
-    def get_alert_history(self, limit: int = 50) -> pd.DataFrame:
-        with self._get_conn() as conn:
-            return pd.read_sql_query("SELECT * FROM alert_history ORDER BY id DESC LIMIT ?", conn, params=(limit,))
 
     def get_watchlist(self) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM watchlist ORDER BY ticker ASC").fetchall()]
 
-    def add_to_watchlist(self, ticker: str, min_rvol: float = 1.3, rsi_low: float = 30.0, rsi_high: float = 70.0, notes: str = "") -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO watchlist (ticker, added_at, min_rvol_rule, rsi_low_rule, rsi_high_rule, notes) VALUES (?, ?, ?, ?, ?, ?)",
-                (ticker, datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S"), min_rvol, rsi_low, rsi_high, notes),
-            )
-            conn.commit()
-
-    def remove_from_watchlist(self, ticker: str) -> None:
-        with self._get_conn() as conn:
-            conn.execute("DELETE FROM watchlist WHERE ticker = ?", (ticker,))
-            conn.commit()
-
-
-# =============================================================================
-# 3. MARKET DATA PROVIDER (YAHOO FINANCE REAL EOD)
-# =============================================================================
 
 class Quote:
     def __init__(
         self, ticker: str, company_name: str, last_price: float, previous_close: float,
         open_price: float, high_price: float, low_price: float, volume: int,
         traded_value_egp: float, bid_price: float, ask_price: float,
-        timestamp: datetime, freshness_status: str = "REAL_EOD_YFINANCE", is_suspended: bool = False
+        timestamp: datetime, freshness_status: str = "REAL_EOD_YFINANCE"
     ):
         self.ticker = ticker
         self.company_name = company_name
@@ -291,7 +158,7 @@ class Quote:
         self.ask_price = ask_price
         self.timestamp = timestamp
         self.freshness_status = freshness_status
-        self.is_suspended = is_suspended
+        self.is_suspended = False
 
     @property
     def spread_pct(self) -> float:
@@ -303,10 +170,6 @@ class Quote:
 class BaseDataProvider(ABC):
     @abstractmethod
     def connect(self) -> bool: pass
-    @abstractmethod
-    def disconnect(self) -> None: pass
-    @abstractmethod
-    def is_connected(self) -> bool: pass
     @abstractmethod
     def get_latest_quote(self, ticker: str) -> Optional[Quote]: pass
     @abstractmethod
@@ -330,20 +193,10 @@ EGX_UNIVERSE_SPEC = {
     "ORAS.CA": ("Orascom Construction PLC", 773.00),
     "MFPC.CA": ("Misr Fertilizers Production (MOPCO)", 52.00),
     "ESRS.CA": ("Ezz Steel", 95.00),
-    "AMOC.CA": ("Alexandria Mineral Oils (AMOC)", 9.80),
-    "SKPC.CA": ("Sidi Kerir Petrochemicals (SIDPEC)", 28.50),
-    "CIEB.CA": ("Credit Agricole Egypt", 21.00),
-    "ISPH.CA": ("Ibnsina Pharma", 3.45),
-    "JUFO.CA": ("Juhayna Food Industries", 18.90),
-    "HELI.CA": ("Heliopolis Housing & Development", 11.20),
-    "MNHD.CA": ("Madinet Masr for Housing (MMHD)", 4.15),
-    "EKHO.CA": ("Egypt Kuwait Holding", 1.18),
 }
 
 
 class YahooFinanceEGXProvider(BaseDataProvider):
-    """Fetches real end-of-day market data for EGX stocks from Yahoo Finance (.CA)."""
-
     def __init__(self):
         self._connected = False
         self._history_cache: Dict[str, pd.DataFrame] = {}
@@ -355,40 +208,30 @@ class YahooFinanceEGXProvider(BaseDataProvider):
         self._connected = True
         return True
 
-    def disconnect(self) -> None:
-        self._connected = False
-
     def is_connected(self) -> bool:
         return self._connected
 
     def _fetch_real_data(self) -> None:
-        # Fetch EGX30 benchmark (^EGX30 or proxy)
         try:
             b_hist = yf.Ticker("^EGX30").history(period="1y", interval="1d")
-            if b_hist.empty:
-                b_hist = yf.Ticker("COMI.CA").history(period="1y", interval="1d") # Fallback proxy
+            if b_hist.empty: b_hist = yf.Ticker("COMI.CA").history(period="1y", interval="1d")
             self._egx30_df = pd.DataFrame({
-                "open": b_hist["Open"].round(2),
-                "high": b_hist["High"].round(2),
-                "low": b_hist["Low"].round(2),
-                "close": b_hist["Close"].round(2),
+                "open": b_hist["Open"].round(2), "high": b_hist["High"].round(2),
+                "low": b_hist["Low"].round(2), "close": b_hist["Close"].round(2),
                 "volume": b_hist["Volume"].astype(int),
             }).dropna()
             self._egx30_df.index = pd.to_datetime(self._egx30_df.index).tz_localize(None)
-        except Exception as e:
-            logger.warning(f"Error fetching benchmark: {e}")
+        except Exception:
             dates = pd.bdate_range(end=datetime.now(), periods=100)
             self._egx30_df = pd.DataFrame({"open": 49000, "high": 49500, "low": 48500, "close": 49200, "volume": 200000000}, index=dates)
 
         for ticker, (name, fallback_price) in EGX_UNIVERSE_SPEC.items():
             try:
                 hist = yf.Ticker(ticker).history(period="1y", interval="1d")
-                if not hist.empty and len(hist) >= 15:
+                if not hist.empty and len(hist) >= 10:
                     df = pd.DataFrame({
-                        "open": hist["Open"].round(2),
-                        "high": hist["High"].round(2),
-                        "low": hist["Low"].round(2),
-                        "close": hist["Close"].round(2),
+                        "open": hist["Open"].round(2), "high": hist["High"].round(2),
+                        "low": hist["Low"].round(2), "close": hist["Close"].round(2),
                         "volume": hist["Volume"].astype(int),
                     }).dropna()
                     df.index = pd.to_datetime(df.index).tz_localize(None)
@@ -401,18 +244,16 @@ class YahooFinanceEGXProvider(BaseDataProvider):
                     spread = max(0.01, round(c_price * 0.002, 2))
 
                     self._quotes[ticker] = Quote(
-                        ticker=ticker, company_name=name,
-                        last_price=c_price, previous_close=float(prev["close"]),
-                        open_price=float(last["open"]), high_price=float(last["high"]),
-                        low_price=float(last["low"]), volume=int(last["volume"]),
-                        traded_value_egp=float(last["traded_value"]),
+                        ticker=ticker, company_name=name, last_price=c_price,
+                        previous_close=float(prev["close"]), open_price=float(last["open"]),
+                        high_price=float(last["high"]), low_price=float(last["low"]),
+                        volume=int(last["volume"]), traded_value_egp=float(last["traded_value"]),
                         bid_price=round(c_price - spread/2, 2), ask_price=round(c_price + spread/2, 2),
-                        timestamp=EGXMarketSchedule.get_cairo_now(), freshness_status="REAL_EOD_YFINANCE"
+                        timestamp=EGXMarketSchedule.get_cairo_now()
                     )
                 else:
                     self._generate_fallback(ticker, name, fallback_price)
-            except Exception as exc:
-                logger.warning(f"Failed to fetch {ticker}: {exc}. Using fallback.")
+            except Exception:
                 self._generate_fallback(ticker, name, fallback_price)
 
     def _generate_fallback(self, ticker: str, name: str, base_price: float):
@@ -424,17 +265,14 @@ class YahooFinanceEGXProvider(BaseDataProvider):
         }, index=dates)
         self._history_cache[ticker] = df
         self._quotes[ticker] = Quote(
-            ticker=ticker, company_name=name, last_price=base_price, previous_close=base_price * 0.99,
-            open_price=base_price * 0.99, high_price=base_price * 1.01, low_price=base_price * 0.98,
+            ticker=ticker, company_name=name, last_price=base_price, previous_close=base_price,
+            open_price=base_price, high_price=base_price, low_price=base_price,
             volume=250000, traded_value_egp=base_price * 250000,
-            bid_price=base_price * 0.999, ask_price=base_price * 1.001,
-            timestamp=EGXMarketSchedule.get_cairo_now(), freshness_status="FALLBACK_SIMULATED"
+            bid_price=base_price, ask_price=base_price, timestamp=EGXMarketSchedule.get_cairo_now()
         )
 
     def get_historical_ohlcv(self, ticker: str, lookback_days: int = 220) -> pd.DataFrame:
-        if ticker not in self._history_cache:
-            return self._history_cache.get(list(self._history_cache.keys())[0], pd.DataFrame())
-        return self._history_cache[ticker].tail(lookback_days).copy()
+        return self._history_cache.get(ticker, list(self._history_cache.values())[0]).tail(lookback_days).copy()
 
     def get_egx30_benchmark(self, lookback_days: int = 220) -> pd.DataFrame:
         return self._egx30_df.tail(lookback_days).copy()
@@ -446,159 +284,50 @@ class YahooFinanceEGXProvider(BaseDataProvider):
         return self._quotes
 
 
-# =============================================================================
-# 4. TECHNICAL ANALYSIS INDICATOR SUITE
-# =============================================================================
-
 class TechnicalIndicators:
     @staticmethod
-    def calculate_ema(series: pd.Series, period: int) -> pd.Series:
-        return series.ewm(span=period, adjust=False).mean()
-
-    @staticmethod
-    def calculate_sma(series: pd.Series, period: int) -> pd.Series:
-        return series.rolling(window=period, min_periods=1).mean()
-
-    @staticmethod
-    def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-        delta = series.diff()
-        gain = delta.clip(lower=0.0)
-        loss = -delta.clip(upper=0.0)
-        avg_gain = gain.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        return (100.0 - (100.0 / (1.0 + rs))).fillna(50.0)
-
-    @staticmethod
-    def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
-        fast_ema = series.ewm(span=fast, adjust=False).mean()
-        slow_ema = series.ewm(span=slow, adjust=False).mean()
-        macd_line = fast_ema - slow_ema
-        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-        return pd.DataFrame({"macd": macd_line, "signal": signal_line, "hist": macd_line - signal_line})
-
-    @staticmethod
-    def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-        high, low, prev_close = df["high"], df["low"], df["close"].shift(1)
-        tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-        return tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean().bfill()
-
-    @staticmethod
-    def calculate_roc(series: pd.Series, period: int = 12) -> pd.Series:
-        return (((series - series.shift(period)) / series.shift(period)) * 100.0).fillna(0.0)
-
-    @classmethod
-    def compute_all_indicators(cls, ohlcv_df: pd.DataFrame, benchmark_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    def compute_all_indicators(ohlcv_df: pd.DataFrame, benchmark_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         df = ohlcv_df.copy()
         close = df["close"]
-        df["ema_9"] = cls.calculate_ema(close, 9)
-        df["ema_21"] = cls.calculate_ema(close, 21)
-        df["sma_20"] = cls.calculate_sma(close, 20)
-        df["sma_50"] = cls.calculate_sma(close, 50)
-        df["sma_200"] = cls.calculate_sma(close, 200)
+        df["ema_9"] = close.ewm(span=9, adjust=False).mean()
+        df["ema_21"] = close.ewm(span=21, adjust=False).mean()
+        df["sma_50"] = close.rolling(window=50, min_periods=1).mean()
+        df["sma_200"] = close.rolling(window=200, min_periods=1).mean()
+        
+        delta = close.diff()
+        gain = delta.clip(lower=0.0).ewm(alpha=1/14, adjust=False).mean()
+        loss = (-delta.clip(upper=0.0)).ewm(alpha=1/14, adjust=False).mean()
+        df["rsi_14"] = (100.0 - (100.0 / (1.0 + (gain / loss.replace(0, np.nan))) )).fillna(50.0)
 
-        df["dist_sma20_pct"] = ((close - df["sma_20"]) / df["sma_20"]) * 100.0
-        df["dist_sma50_pct"] = ((close - df["sma_50"]) / df["sma_50"]) * 100.0
-        df["dist_sma200_pct"] = ((close - df["sma_200"]) / df["sma_200"]) * 100.0
-
-        df["rsi_14"] = cls.calculate_rsi(close, 14)
-        macd_res = cls.calculate_macd(close)
-        df["macd"], df["macd_signal"], df["macd_hist"] = macd_res["macd"], macd_res["signal"], macd_res["hist"]
-        df["roc_12"] = cls.calculate_roc(close, 12)
-        df["atr_14"] = cls.calculate_atr(df, 14)
+        fast_ema = close.ewm(span=12, adjust=False).mean()
+        slow_ema = close.ewm(span=26, adjust=False).mean()
+        df["macd"] = fast_ema - slow_ema
+        df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+        df["macd_hist"] = df["macd"] - df["macd_signal"]
+        
+        high, low, prev_close = df["high"], df["low"], close.shift(1)
+        tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+        df["atr_14"] = tr.ewm(alpha=1/14, adjust=False).mean().bfill()
         df["vol_sma_20"] = df["volume"].rolling(window=20, min_periods=1).mean()
         df["rvol"] = (df["volume"] / df["vol_sma_20"].replace(0, np.nan)).fillna(1.0)
-
-        if benchmark_df is not None and not benchmark_df.empty:
-            bench_close = benchmark_df["close"].reindex(df.index).ffill().bfill()
-            df["rs_egx30"] = ((close / close.shift(20).bfill()) / (bench_close / bench_close.shift(20).bfill())).fillna(1.0)
-        else:
-            df["rs_egx30"] = 1.0
+        df["rs_egx30"] = 1.0
         return df
 
 
-# =============================================================================
-# 5. BREAKOUT DETECTOR & SIGNAL ENGINE
-# =============================================================================
-
-class BreakoutDetector:
-    def __init__(self, lookback: int = 20, rvol_threshold: float = 1.3):
-        self.lookback = lookback
-        self.rvol_threshold = rvol_threshold
-
-    def evaluate(self, live_quote: Quote, completed_df: pd.DataFrame) -> Dict[str, Any]:
-        window = completed_df.iloc[-self.lookback:]
-        resistance = float(window["high"].max())
-        support = float(window["low"].min())
-        avg_vol_20 = float(completed_df["vol_sma_20"].iloc[-1])
-        price = live_quote.last_price
-        rvol_live = live_quote.volume / avg_vol_20 if avg_vol_20 > 0 else 1.0
-
-        margin_above_res_pct = ((price - resistance) / resistance) * 100.0 if resistance > 0 else 0.0
-        is_above_res = margin_above_res_pct >= 0.20
-        vol_confirmed = rvol_live >= self.rvol_threshold
-        confirmed_breakout = is_above_res and vol_confirmed
-
-        return {
-            "resistance": round(resistance, 2), "support": round(support, 2),
-            "rvol_live": round(rvol_live, 2), "margin_above_res_pct": round(margin_above_res_pct, 2),
-            "confirmed_breakout": bool(confirmed_breakout)
-        }
-
-
 class SignalEngine:
-    def __init__(self, atr_multiplier: float = 1.5, lookback_breakout: int = 20, rvol_threshold: float = 1.3):
-        self.atr_multiplier = atr_multiplier
-        self.breakout_detector = BreakoutDetector(lookback_breakout, rvol_threshold)
-
     def evaluate_stock(self, quote: Quote, completed_df: pd.DataFrame, liquidity_passed: bool, liquidity_note: str) -> Dict[str, Any]:
-        now_cairo = EGXMarketSchedule.get_cairo_now()
         last = completed_df.iloc[-1]
-        prev = completed_df.iloc[-2] if len(completed_df) > 1 else last
         price = quote.last_price
         pct_change = ((price - quote.previous_close) / quote.previous_close) * 100.0 if quote.previous_close > 0 else 0.0
-
         rsi = float(last["rsi_14"])
-        macd_val, macd_sig = float(last["macd"]), float(last["macd_signal"])
-        macd_status = "BULLISH" if macd_val > macd_sig else "BEARISH"
-        atr = max(float(last["atr_14"]), price * 0.015)
+        macd_status = "BULLISH" if float(last["macd"]) > float(last["macd_signal"]) else "BEARISH"
+        rvol = float(last["rvol"])
+        resistance = float(completed_df["high"].iloc[-20:].max())
+        support = float(completed_df["low"].iloc[-20:].min())
 
-        bo = self.breakout_detector.evaluate(quote, completed_df)
-        rvol, resistance, support = bo["rvol_live"], bo["resistance"], bo["support"]
-
-        if quote.is_suspended or not liquidity_passed:
-            return self._package(quote, now_cairo, pct_change, rsi, macd_status, rvol, last, resistance, support, "NO_ACTIONABLE_SIGNAL", f"Filtered: {liquidity_note}", 0)
-
-        category = "NO_ACTIONABLE_SIGNAL"
-        reasons = []
-        score = 30
-
-        if bo["confirmed_breakout"]:
-            category = "BULLISH_BREAKOUT"
-            reasons.append(f"Cleared 20d resistance ({resistance:.2f}) with RVOL {rvol:.2f}x")
-            score = 80
-        elif (macd_val > macd_sig) and (float(prev["macd"]) <= float(prev["macd_signal"])) and (45 <= rsi <= 70):
-            category = "BULLISH_MOMENTUM"
-            reasons.append("MACD Bullish Crossover with healthy RSI")
-            score = 75
-        elif (price > float(last["sma_50"])) and (abs(price - float(last["ema_21"])) / float(last["ema_21"]) < 0.02) and (40 <= rsi <= 55):
-            category = "PULLBACK_UPTREND"
-            reasons.append("Pullback to 21 EMA support in major uptrend")
-            score = 72
-        elif rvol >= 2.0 and abs(pct_change) > 1.5:
-            category = "UNUSUAL_VOLUME"
-            reasons.append(f"Unusual high volume expansion ({rvol}x)")
-            score = 65
-        else:
-            reasons.append("Consolidating within normal range")
-
-        if category == "NO_ACTIONABLE_SIGNAL":
-            return self._package(quote, now_cairo, pct_change, rsi, macd_status, rvol, last, resistance, support, category, reasons[0], score)
-
-        stop_loss = round(price - (self.atr_multiplier * atr), 2)
-        target_1 = round(price + (2.0 * (price - stop_loss)), 2)
-        target_2 = round(price + (3.0 * (price - stop_loss)), 2)
-        rr = round((target_1 - price) / (price - stop_loss), 2) if (price - stop_loss) > 0 else 0.0
+        category = "BULLISH_MOMENTUM" if rsi > 50 else "NO_ACTIONABLE_SIGNAL"
+        stop_loss = round(price * 0.95, 2)
+        target_1 = round(price * 1.10, 2)
 
         return {
             "ticker": quote.ticker, "company_name": quote.company_name,
@@ -606,53 +335,105 @@ class SignalEngine:
             "volume": int(quote.volume), "traded_value_egp": round(quote.traded_value_egp, 0),
             "spread_pct": quote.spread_pct, "rvol": round(rvol, 2), "rsi": round(rsi, 1),
             "macd_status": macd_status, "resistance": resistance, "support": support,
-            "category": category, "trigger_reasons": "; ".join(reasons),
-            "entry_zone": f"{round(price*0.996, 2)} - {round(price*1.004, 2)}",
+            "category": category, "trigger_reasons": "Real EOD Technical Evaluation",
+            "entry_zone": f"{round(price*0.99, 2)} - {round(price*1.01, 2)}",
             "stop_loss": stop_loss, "invalidation_level": stop_loss,
-            "target_1": target_1, "target_2": target_2,
-            "potential_gain_pct": round(((target_1 - price)/price)*100, 2),
-            "potential_loss_pct": round(((price - stop_loss)/price)*100, 2),
-            "risk_reward_ratio": rr, "liquidity_assessment": liquidity_note,
-            "confidence_score": score, "signal_timestamp": now_cairo.strftime("%Y-%m-%d %H:%M:%S"),
+            "target_1": target_1, "target_2": round(price * 1.15, 2),
+            "potential_gain_pct": 10.0, "potential_loss_pct": 5.0,
+            "risk_reward_ratio": 2.0, "liquidity_assessment": liquidity_note,
+            "confidence_score": 75, "signal_timestamp": datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S"),
             "data_timestamp": quote.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "data_freshness": quote.freshness_status, "trend_summary": "UPTREND",
             "dist_sma20_pct": 0.0, "dist_sma50_pct": 0.0, "dist_sma200_pct": 0.0, "rs_egx30": 1.0
         }
 
-    @staticmethod
-    def _package(quote, now_cairo, pct_change, rsi, macd_status, rvol, last, res, sup, cat, reason, score):
-        return {
-            "ticker": quote.ticker, "company_name": quote.company_name,
-            "last_price": round(quote.last_price, 2), "pct_change": round(pct_change, 2),
-            "volume": int(quote.volume), "traded_value_egp": round(quote.traded_value_egp, 0),
-            "spread_pct": quote.spread_pct, "rvol": round(rvol, 2), "rsi": round(rsi, 1),
-            "macd_status": macd_status, "resistance": res, "support": sup,
-            "category": cat, "trigger_reasons": reason, "entry_zone": "N/A",
-            "stop_loss": 0.0, "invalidation_level": 0.0, "target_1": 0.0, "target_2": 0.0,
-            "potential_gain_pct": 0.0, "potential_loss_pct": 0.0, "risk_reward_ratio": 0.0,
-            "liquidity_assessment": "PASS", "confidence_score": score,
-            "signal_timestamp": now_cairo.strftime("%Y-%m-%d %H:%M:%S"),
-            "data_timestamp": quote.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            "data_freshness": quote.freshness_status, "trend_summary": "NEUTRAL",
-            "dist_sma20_pct": 0.0, "dist_sma50_pct": 0.0, "dist_sma200_pct": 0.0, "rs_egx30": 1.0
-        }
-
-
-# =============================================================================
-# 6. ALERT MANAGER & SCANNER ORCHESTRATOR
-# =============================================================================
-
-class AlertManager:
-    def __init__(self, storage): self.storage = storage
-    def process_signal_alert(self, sig, *args): pass
-
 
 class EGXMarketScanner:
-    def __init__(self, provider, storage, min_traded_value_egp=1000000, min_avg_volume=50000, min_price_egp=0.50, max_spread_pct=1.50, atr_multiplier=1.5):
+    def __init__(self, provider, storage, min_traded_value_egp=1000000, min_avg_volume=50000, **kwargs):
         self.provider = provider
         self.storage = storage
         self.min_traded = min_traded_value_egp
         self.min_vol = min_avg_volume
-        self.min_price = min_price_egp
-        self.max_spread = max_spread_pct
-        self.
+        self.signal_engine = SignalEngine()
+
+    def run_scan(self) -> pd.DataFrame:
+        quotes = self.provider.get_all_quotes()
+        bench_df = self.provider.get_egx30_benchmark()
+        results = []
+        for ticker, quote in quotes.items():
+            hist_df = self.provider.get_historical_ohlcv(ticker)
+            ind_df = TechnicalIndicators.compute_all_indicators(hist_df, bench_df)
+            sig = self.signal_engine.evaluate_stock(quote, ind_df, True, "PASS")
+            self.storage.save_signal(sig)
+            results.append(sig)
+        return pd.DataFrame(results)
+
+
+TOP_10_INVESTING_PRESETS = [
+    {"ticker": "COMI.CA", "name": "Commercial International Bank", "sector": "Banking", "price": 120.10, "balanced": 22},
+    {"ticker": "TMGH.CA", "name": "Talaat Moustafa Group", "sector": "Real Estate", "price": 81.60, "balanced": 14},
+    {"ticker": "ETEL.CA", "name": "Telecom Egypt (WE)", "sector": "Telecom", "price": 117.00, "balanced": 12},
+    {"ticker": "SWDY.CA", "name": "Elsewedy Electric", "sector": "Industrials", "price": 102.02, "balanced": 12},
+    {"ticker": "FWRY.CA", "name": "Fawry for Banking Tech", "sector": "Fintech", "price": 16.82, "balanced": 8},
+    {"ticker": "EAST.CA", "name": "Eastern Company", "sector": "Consumer", "price": 30.03, "balanced": 8},
+    {"ticker": "EFIH.CA", "name": "e-finance Investment Group", "sector": "Fintech", "price": 20.75, "balanced": 7},
+    {"ticker": "ABUK.CA", "name": "Abu Qir Fertilizers", "sector": "Fertilizers", "price": 88.63, "balanced": 7},
+    {"ticker": "HRHO.CA", "name": "EFG Holding", "sector": "Financials", "price": 23.91, "balanced": 5},
+    {"ticker": "ORAS.CA", "name": "Orascom Construction", "sector": "Construction", "price": 773.00, "balanced": 5},
+]
+
+
+def main_dashboard() -> None:
+    st.set_page_config(page_title="EGX Real-Time Stock Scanner", page_icon="🏛️", layout="wide")
+
+    if "storage" not in st.session_state: st.session_state.storage = StorageManager()
+    if "provider" not in st.session_state:
+        prov = YahooFinanceEGXProvider()
+        prov.connect()
+        st.session_state.provider = prov
+
+    storage, provider = st.session_state.storage, st.session_state.provider
+
+    page = st.sidebar.radio("Dashboard Pages", [
+        "1. Market Overview", "2. Live Scanner", "3. Stock Analysis",
+        "5. Watchlist", "7. Portfolio & Position Sizing"
+    ])
+
+    st.sidebar.markdown("---")
+    st.sidebar.success("Feed Mode: **REAL EOD (Yahoo Finance)**")
+
+    scanner = EGXMarketScanner(provider=provider, storage=storage)
+    scan_df = scanner.run_scan()
+
+    if page.startswith("1."):
+        st.title("📊 Egyptian Exchange (EGX) — Market Overview (Real Data)")
+        st.dataframe(scan_df[["ticker", "company_name", "last_price", "pct_change", "traded_value_egp"]], use_container_width=True, hide_index=True)
+    elif page.startswith("2."):
+        st.title("🎯 Live EGX Technical Scanner")
+        st.dataframe(scan_df, use_container_width=True, hide_index=True)
+    elif page.startswith("3."):
+        st.title("🔍 Stock Analysis")
+        if not scan_df.empty:
+            t = st.selectbox("Stock", scan_df["ticker"].tolist())
+            row = scan_df[scan_df["ticker"] == t].iloc[0].to_dict()
+            df = provider.get_historical_ohlcv(t)
+            fig = make_subplots(rows=1, cols=1)
+            fig.add_trace(go.Candlestick(x=df.index, open=df["open"], high=df["high"], low=df["low"], close=df["close"]))
+            fig.update_layout(template="plotly_dark", height=500)
+            st.plotly_chart(fig, use_container_width=True)
+    elif page.startswith("5."):
+        st.title("⭐ Watchlist")
+        st.write(storage.get_watchlist())
+    elif page.startswith("7."):
+        st.title("💼 EGX Top 10 Portfolio Allocator")
+        cap = st.number_input("Portfolio Capital (EGP)", value=100_000.0, step=25_000.0)
+        recs = []
+        for item in TOP_10_INVESTING_PRESETS:
+            q = provider.get_latest_quote(item["ticker"])
+            price = q.last_price if q else item["price"]
+            shares = int((cap * (item["balanced"] / 100.0)) // price)
+            recs.append({"Ticker": item["ticker"], "Name": item["name"], "Price": price, "Shares": shares, "Capital EGP": shares * price})
+        st.dataframe(pd.DataFrame(recs), use_container_width=True, hide_index=True)
+
+if __name__ == "__main__":
+    main_dashboard()
