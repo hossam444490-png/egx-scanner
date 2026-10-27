@@ -28,8 +28,11 @@ import streamlit as st
 
 # Optional dotenv loading if installed
 try:
-    from dotenv import load_dotenv
-    load_dotenv()
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not installed — continue without loading .env
+    pass
 except ImportError:
     pass
 
