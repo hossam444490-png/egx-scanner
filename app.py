@@ -1420,14 +1420,11 @@ def main_dashboard() -> None:
     st.sidebar.markdown(f"**Session:** `{session_info['status']}`")
     st.sidebar.caption(session_info["description"])
     st.sidebar.caption(f"🕒 {session_info['cairo_time']}")
+    st.sidebar.success(
+        "Feed Mode: **REAL EOD (Yahoo Finance)** (EGX Completed Candles)"
+    )
     st.sidebar.warning(
-st.sidebar.success(
-    "Feed Mode: **REAL EOD (Yahoo Finance)** (EGX Completed Candles)"
-)
-
-st.sidebar.warning(
-    "Connect a licensed DirectFN/LSEG key in `.env` for live exchange streaming."
-)        "Connect a licensed DirectFN/LSEG key in `.env` for live exchange streaming."
+        "Connect a licensed DirectFN/LSEG key in `.env` for live exchange streaming."
     )
 
     scanner = EGXMarketScanner(
