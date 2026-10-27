@@ -1930,7 +1930,7 @@ def test_technical_indicators_accuracy():
 
 
 def test_signal_engine_and_backtester():
-    prov = SimulatedEGXDataProvider(seed=42)
+    prov = provider = YahooFinanceEGXProvider()
     prov.connect()
     quote = prov.get_latest_quote("COMI.CA")
     df = prov.get_historical_ohlcv("COMI.CA", lookback_days=220)
@@ -1960,6 +1960,57 @@ def test_portfolio_allocation_math():
     assert shares == 183
     assert actual_egp <= target_egp
     assert (cap - actual_egp) >= 0.0
+    import yfinance as yf
+
+class YahooFinanceEGXProvider(SimulatedEGXDataProvider):
+    """
+    يجلب البيانات الحقيقية للأسهم المصرية (.CA) من Yahoo Finance
+    مع الحفاظ على نفس تصميم المنصة وحاسبة المحفظة.
+    """
+    def _init_histories(self) -> None:
+        super()._init_histories()  # كاحتياطي لو تعذر الاتصال
+        for ticker, (name, _) in EGX_UNIVERSE_SPEC.items():
+            try:
+                hist = yf.Ticker(ticker).history(period="1y", interval="1d")
+                if not hist.empty and len(hist) >= 30:
+                    df = pd.DataFrame({
+                        "open": hist["Open"].round(2),
+                        "high": hist["High"].round(2),
+                        "low": hist["Low"].round(2),
+                        "close": hist["Close"].round(2),
+                        "volume": hist["Volume"].astype(int),
+                    })
+                    df.index = pd.to_datetime(df.index).tz_localize(None)
+                    df["traded_value"] = (df["volume"] * df["close"]).round(2)
+                    df = self.validate_ohlcv(df)
+                    self._history_cache[ticker] = df
+
+                    last = df.iloc[-1]
+                    prev = df.iloc[-2]
+                    self._quotes[ticker] = Quote(
+                        ticker=ticker,
+                        company_name=name,
+                        last_price=float(last["close"]),
+                        previous_close=float(prev["close"]),
+                        open_price=float(last["open"]),
+                        high_price=float(last["high"]),
+                        low_price=float(last["low"]),
+                        volume=int(last["volume"]),
+                        traded_value_egp=float(last["traded_value"]),
+                        bid_price=round(float(last["close"]) * 0.999, 2),
+                        ask_price=round(float(last["close"]) * 1.001, 2),
+                        bid_size=0,
+                        ask_size=0,
+                        timestamp=EGXMarketSchedule.get_cairo_now(),
+                        is_realtime=False,
+                        freshness_status="REAL_EOD_YFINANCE",
+                        is_suspended=False,
+                    )
+            except Exception as exc:
+                logger.warning(f"تعذر جلب الداتا الحقيقية لـ {ticker} وتم الاستبدال بالافتراضي: {exc}")
+
+    def _step_intraday_quote(self, ticker: str) -> None:
+        pass
 
 
 if __name__ == "__main__":
