@@ -1374,7 +1374,7 @@ def main_dashboard() -> None:
     if "storage" not in st.session_state:
         st.session_state.storage = StorageManager()
     if "provider" not in st.session_state:
-        prov = SimulatedEGXDataProvider(seed=42)
+        prov = YahooFinanceEGXProvider()
         prov.connect()
         st.session_state.provider = prov
     if "alert_mgr" not in st.session_state:
